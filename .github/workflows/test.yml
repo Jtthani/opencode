@@ -70,6 +70,12 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
+      # Default CI worker count (5) oversubscribes a standard GitHub-hosted
+      # runner running a live Vite dev server alongside that many Chromium
+      # instances, producing widespread toBeVisible() timeouts unrelated to
+      # the features under test. Lower concurrency trades wall-clock time
+      # for reliability.
+      PLAYWRIGHT_WORKERS: "2"
     defaults:
       run:
         shell: bash
