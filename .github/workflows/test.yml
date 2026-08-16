@@ -66,7 +66,7 @@ jobs:
         run: bun run test:httpapi
 
   e2e:
-    name: e2e
+    name: e2e (smoke)
     runs-on: ubuntu-latest
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.playwright-browsers
@@ -116,17 +116,20 @@ jobs:
         working-directory: packages/app
         run: bunx playwright install chromium
 
-      - name: Run app e2e tests
-        run: bun --cwd packages/app test:e2e:local
+      - name: Run app e2e smoke tests
+        # Full regression suite (packages/app/e2e/regression) runs nightly
+        # instead of on every push — see e2e-regression.yml. This keeps
+        # every-push feedback fast while still catching broad regressions.
+        run: bun --cwd packages/app test:e2e:local e2e/smoke e2e/user-story
         env:
           CI: true
-        timeout-minutes: 30
+        timeout-minutes: 15
 
       - name: Upload Playwright artifacts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: playwright-${{ github.run_attempt }}
+          name: playwright-smoke-${{ github.run_attempt }}
           if-no-files-found: ignore
           retention-days: 7
           path: |
