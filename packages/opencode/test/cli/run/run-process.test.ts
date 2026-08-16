@@ -157,9 +157,13 @@ describe("opencode run (non-interactive subprocess)", () => {
     "--format json emits a pure error record for a rejected prompt request",
     ({ opencode }) =>
       Effect.gen(function* () {
+        // Locally this round-trip takes ~26s of the default 30s budget, leaving
+        // almost no margin under CI load. Give it more room on both the
+        // subprocess timeout and the surrounding test timeout.
         const result = yield* opencode.run("use an unknown model", {
           model: "test/nonexistent-model",
           format: "json",
+          timeoutMs: 60_000,
         })
 
         expect(result.exitCode).not.toBe(0)
@@ -173,7 +177,7 @@ describe("opencode run (non-interactive subprocess)", () => {
         })
         expect(result.stdout.split("\n").filter(Boolean)).toHaveLength(1)
       }),
-    30_000,
+    90_000,
   )
 
   cliItConcurrent(
@@ -257,10 +261,16 @@ describe("opencode run (non-interactive subprocess)", () => {
   cliItConcurrent(
     "rejects requested permissions by default and allows them with the dangerous flag",
     ({ home, llm, opencode }) =>
+      // Three sequential subprocess round-trips, each with its own internal
+      // timeoutMs (independent of the outer test timeout below). Widened
+      // both to leave margin under CI load.
       Effect.gen(function* () {
         yield* llm.tool("bash", { command: "rm -f denied-file", description: "Remove a test file" })
         yield* llm.text("continued after rejection")
-        const denied = yield* opencode.run("request permission", { permission: { bash: "ask" } })
+        const denied = yield* opencode.run("request permission", {
+          permission: { bash: "ask" },
+          timeoutMs: 45_000,
+        })
         opencode.expectExit(denied, 0)
         expect(denied.stderr).toContain("permission requested: bash")
         expect(denied.stdout).toBe("")
@@ -271,6 +281,7 @@ describe("opencode run (non-interactive subprocess)", () => {
         const allowed = yield* opencode.run("request permission", {
           permission: { bash: "ask" },
           extraArgs: ["--dangerously-skip-permissions"],
+          timeoutMs: 45_000,
         })
         opencode.expectExit(allowed, 0)
         expect(allowed.stderr).not.toContain("permission requested: bash")
@@ -282,12 +293,13 @@ describe("opencode run (non-interactive subprocess)", () => {
         const explicitlyDenied = yield* opencode.run("request denied permission", {
           permission: { bash: "deny" },
           extraArgs: ["--dangerously-skip-permissions"],
+          timeoutMs: 45_000,
         })
         opencode.expectExit(explicitlyDenied, 0)
         expect(explicitlyDenied.stdout).toContain("continued after explicit denial")
         expect(yield* Effect.promise(() => Bun.file(`${home}/explicitly-denied`).exists())).toBe(false)
       }),
-    60_000,
+    120_000,
   )
 
   cliItLive(
