@@ -84,14 +84,19 @@ describe("opencode run (non-interactive subprocess)", () => {
     "exits nonzero promptly when the model is unknown (regression for #27371)",
     ({ opencode }) =>
       Effect.gen(function* () {
+        // The assertion threshold previously equaled the harness kill
+        // timeout, giving zero margin — under CI load durationMs landed at
+        // 15301ms against a <15000ms assertion. Give the harness a longer
+        // leash but keep the assertion well below it, so a real regression
+        // to "hangs until killed" still fails loudly.
         const result = yield* opencode.run("say hi", {
           model: "test/nonexistent-model",
-          timeoutMs: 15_000,
+          timeoutMs: 30_000,
         })
         expect(result.exitCode).not.toBe(0)
-        expect(result.durationMs).toBeLessThan(15_000)
+        expect(result.durationMs).toBeLessThan(25_000)
       }),
-    30_000,
+    45_000,
   )
 
   // The test provider's SSE error item is interpreted by the SDK as an unknown
@@ -349,8 +354,10 @@ describe("opencode run (non-interactive subprocess)", () => {
         const result = yield* run.result
 
         expect(result.exitCode).not.toBe(0)
-        expect(result.durationMs).toBeLessThan(30_000)
+        // Same zero-margin issue as the #27371 test above: the assertion
+        // threshold equaled the outer test timeout.
+        expect(result.durationMs).toBeLessThan(40_000)
       }),
-    30_000,
+    45_000,
   )
 })
