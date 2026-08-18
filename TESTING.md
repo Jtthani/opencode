@@ -10,6 +10,18 @@ actually covers and, most importantly, **how to get your own tests running in CI
 `bun turbo typecheck` runs `tsgo --noEmit` for every package that has a `typecheck` script. This one just works —
 if your package has a `typecheck` script in `package.json`, it's already covered. Nothing to configure.
 
+**Running out of memory locally?** Turbo's default concurrency (10) spawns enough parallel `tsgo` processes to exhaust
+memory on a constrained machine — this is the same issue CI hit, which is why [`typecheck.yml`](.github/workflows/typecheck.yml)
+runs with `--concurrency=4`. If you're in Docker (e.g. this repo's devcontainer) and hit an OOM kill, first try capping
+concurrency the same way:
+
+```bash
+bun turbo typecheck --concurrency=4
+```
+
+If it still OOMs, increase the memory limit allocated to the Docker engine/VM (Docker Desktop: Settings → Resources →
+Memory) rather than lowering concurrency further.
+
 ## Unit tests
 
 `bun turbo test` (in `test.yml`'s `unit` job) is **not** the same as "every package's `test` script." [`turbo.json`](turbo.json)
