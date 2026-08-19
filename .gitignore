@@ -4,3 +4,4 @@ coverage
 coverage-html
 *.lcov
 .turbo
+.qlty
