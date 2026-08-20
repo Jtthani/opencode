@@ -22,6 +22,10 @@ jobs:
   unit:
     name: unit
     runs-on: ubuntu-latest
+    # Belt-and-suspenders: without this, a step with no timeout-minutes of its
+    # own that hangs runs until GitHub's default 6h job cap instead of failing
+    # fast (see the httpapi-exercise incident this guards against).
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -54,16 +58,16 @@ jobs:
             turbo-${{ runner.os }}-
 
       - name: Run unit tests
-        timeout-minutes: 20
-        run: GITHUB_ACTIONS=false bun turbo test
+        timeout-minutes: 10
+        # Default turbo concurrency (10) oversubscribes ubuntu-latest's 4
+        # vCPUs across 5 packages' test tasks running at once — same
+        # contention issue typecheck.yml already caps for tsgo.
+        run: GITHUB_ACTIONS=false bun turbo test --concurrency=4
 
       - name: Check generated client
+        timeout-minutes: 5
         working-directory: packages/client
         run: bun run check:generated
-
-      - name: Run HttpApi exerciser gates
-        working-directory: packages/opencode
-        run: bun run test:httpapi
 
   e2e:
     name: e2e (smoke)

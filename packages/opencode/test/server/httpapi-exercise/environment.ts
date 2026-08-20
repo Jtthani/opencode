@@ -11,6 +11,12 @@ process.env.XDG_CONFIG_HOME = path.join(exerciseGlobalRoot, "config")
 process.env.XDG_STATE_HOME = path.join(exerciseGlobalRoot, "state")
 process.env.XDG_CACHE_HOME = path.join(exerciseGlobalRoot, "cache")
 process.env.OPENCODE_DISABLE_SHARE = "true"
+// Without this, Config forks a real `npm install` of @opencode-ai/plugin per
+// loaded directory (see config.ts). That install never completes in CI, and
+// any scenario that later calls config.waitForDependencies() (e.g. tool
+// registry matches) blocks on it indefinitely — see the OPENCODE_PURE gate
+// cli-process.ts already relies on for the same reason.
+process.env.OPENCODE_PURE = "1"
 export const exerciseConfigDirectory = path.join(exerciseGlobalRoot, "config", "opencode")
 export const exerciseDataDirectory = path.join(exerciseGlobalRoot, "data", "opencode")
 

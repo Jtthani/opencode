@@ -1,8 +1,9 @@
 # Testing
 
 This repo runs two CI gates on every push ([`.github/workflows/typecheck.yml`](.github/workflows/typecheck.yml) and
-[`.github/workflows/test.yml`](.github/workflows/test.yml)), plus a nightly e2e regression run
-([`.github/workflows/e2e-regression.yml`](.github/workflows/e2e-regression.yml)). This doc explains what each one
+[`.github/workflows/test.yml`](.github/workflows/test.yml)), plus two nightly runs — an e2e regression suite
+([`.github/workflows/e2e-regression.yml`](.github/workflows/e2e-regression.yml)) and the HttpApi exerciser gates
+([`.github/workflows/httpapi-nightly.yml`](.github/workflows/httpapi-nightly.yml)). This doc explains what each one
 actually covers and, most importantly, **how to get your own tests running in CI** — it doesn't happen automatically.
 
 ## Typecheck
@@ -48,6 +49,32 @@ bun test
 ```
 
 (Tests are guarded against running from the repo root — see `AGENTS.md`.)
+
+**Keep this job fast.** It's the only unit coverage that gates every push, so it targets ~5 minutes total. Turbo runs
+with `--concurrency=4` (same fix as `typecheck.yml` — ubuntu-latest's 4 vCPUs get oversubscribed at turbo's default
+concurrency of 10 across 5 packages' test tasks). If your change makes this step noticeably slower, profile it (see
+`packages/opencode/script/profile-test-files.ts` and `perf/test-suite.md`) before adding more to it.
+
+## HttpApi exerciser gates
+
+`packages/opencode`'s `bun run test:httpapi` runs the full HttpApi route-coverage exerciser three times (coverage,
+auth, effect modes — 208 scenarios each) against a real Effect app runtime. This used to run in `test.yml`'s `unit`
+job on every push; it now runs nightly via `httpapi-nightly.yml`, for the same reason the e2e regression suite moved
+off the push gate: too slow and too heavy for a fast feedback loop, and effect-mode scenarios build a real app
+runtime per scenario rather than making a cheap static check.
+
+This is also where a real background hang bit us once: `Config` forks a real `npm install` of `@opencode-ai/plugin`
+per loaded directory unless `OPENCODE_PURE` is set (see `config.ts`), and any scenario that calls
+`config.waitForDependencies()` (e.g. tool registry matches) blocks on that install — which never completes in CI.
+`environment.ts` now sets `OPENCODE_PURE=1` for the whole harness, matching the isolation `test/lib/cli-process.ts`
+already used for CLI subprocess tests. If you add a new httpapi-exercise scenario and it hangs, check this first.
+
+Run it locally the same way CI does:
+
+```bash
+cd packages/opencode
+bun run test:httpapi
+```
 
 ## Test coverage
 
@@ -119,8 +146,9 @@ bun run test:e2e:local e2e/regression/my-new-test.spec.ts  # just your test
 ## Quick reference
 
 ```bash
-bun turbo typecheck              # everything, from repo root
-bun turbo test                   # only the packages wired into turbo.json (see above)
-cd packages/<name> && bun test   # a specific package's tests, regardless of CI wiring
+bun turbo typecheck                          # everything, from repo root
+bun turbo test                               # only the packages wired into turbo.json (see above)
+cd packages/<name> && bun test               # a specific package's tests, regardless of CI wiring
 cd packages/app && bun run test:e2e:local e2e/<smoke|user-story|regression>
+cd packages/opencode && bun run test:httpapi # HttpApi exerciser gates (nightly in CI)
 ```
