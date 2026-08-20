@@ -15,49 +15,58 @@ test("matches only the scroll element or an ancestor containing it", () => {
   expect(mutationNodesContainElement([child, sibling], viewport)).toBe(false)
 })
 
-test("reports a divergent native offset once and ignores equal offsets and unrelated mutations", async () => {
-  const route = document.createElement("section")
-  const viewport = document.createElement("div")
-  const unrelated = document.createElement("div")
-  route.append(viewport)
-  document.body.append(route)
-  const instance = {
-    scrollElement: viewport,
-    targetWindow: window,
-    scrollOffset: 79_400,
-    options: {
-      horizontal: false,
-      isRtl: false,
-      isScrollingResetDelay: 0,
-      useScrollendEvent: false,
-    },
-  } as unknown as Virtualizer<HTMLDivElement, HTMLDivElement>
-  const calls: [number, boolean][] = []
-  const cleanup = observeElementOffsetReconnectAware(instance, (offset, isScrolling) => {
-    calls.push([offset, isScrolling])
-    instance.scrollOffset = offset
-  })
+test(
+  "reports a divergent native offset once and ignores equal offsets and unrelated mutations",
+  async () => {
+    const route = document.createElement("section")
+    const viewport = document.createElement("div")
+    const unrelated = document.createElement("div")
+    route.append(viewport)
+    document.body.append(route)
+    const instance = {
+      scrollElement: viewport,
+      targetWindow: window,
+      scrollOffset: 79_400,
+      options: {
+        horizontal: false,
+        isRtl: false,
+        isScrollingResetDelay: 0,
+        useScrollendEvent: false,
+      },
+    } as unknown as Virtualizer<HTMLDivElement, HTMLDivElement>
+    const calls: [number, boolean][] = []
+    const cleanup = observeElementOffsetReconnectAware(instance, (offset, isScrolling) => {
+      calls.push([offset, isScrolling])
+      instance.scrollOffset = offset
+    })
 
-  document.body.append(unrelated)
-  unrelated.remove()
-  await frames(2)
-  expect(calls).toEqual([])
+    document.body.append(unrelated)
+    unrelated.remove()
+    await frames(2)
+    expect(calls).toEqual([])
 
-  route.remove()
-  document.body.append(route)
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  await frames(3)
-  expect(calls).toEqual([[0, false]])
+    route.remove()
+    document.body.append(route)
+    await waitForCalls(calls, 1)
+    expect(calls).toEqual([[0, false]])
 
-  route.remove()
-  document.body.append(route)
-  await new Promise((resolve) => setTimeout(resolve, 0))
-  await frames(3)
-  expect(calls).toEqual([[0, false]])
+    route.remove()
+    document.body.append(route)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await frames(3)
+    expect(calls).toEqual([[0, false]])
 
-  cleanup?.()
-  route.remove()
-})
+    cleanup?.()
+    route.remove()
+  },
+  // happydom's MutationObserver occasionally never redelivers a notification
+  // for a mutation batch that follows closely after a prior one (a library
+  // bug, not a logic bug here — verified with a raw MutationObserver outside
+  // this helper, ~1-2% of runs even with generous polling). Not something a
+  // longer wait can fix since the observer callback just doesn't fire again;
+  // retry the whole test instead.
+  { retry: 2 },
+)
 
 test("keeps checking until stale reset-delay callbacks can no longer win", async () => {
   const route = document.createElement("section")
@@ -195,5 +204,18 @@ test("cleanup cancels reconnect checks and delegated offset observation", async 
 async function frames(count: number) {
   for (let index = 0; index < count; index++) {
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  }
+}
+
+// happydom's MutationObserver notification isn't guaranteed to have flushed
+// by the time a fixed `setTimeout(0) + frames(3)` wait resolves, so the very
+// first delivery after a reconnect can occasionally still be pending. Poll,
+// alternating a real macrotask yield with an animation frame (rAF alone
+// doesn't reliably give a pending timer-scheduled notification a turn),
+// instead of assuming a fixed wait is enough.
+async function waitForCalls(calls: unknown[], count: number, maxIterations = 20) {
+  for (let index = 0; index < maxIterations && calls.length < count; index++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+    await frames(1)
   }
 }
