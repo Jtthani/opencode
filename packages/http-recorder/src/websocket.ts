@@ -61,80 +61,87 @@ const assertClientEvent = (actual: string, expected: WebSocketEvent | undefined,
     throw new Error(`WebSocket client frame ${index + 1}: expected ${safeText(expected)}, received ${safeText(actual)}`)
   })
 
+const openSnapshot = (redactor: Redactor, request: WebSocketRequest) => {
+  const snapshot = redactor.request({
+    method: "GET",
+    url: request.url,
+    headers: headersRecord(request.headers),
+    body: "",
+  })
+  return { url: snapshot.url, headers: snapshot.headers }
+}
+
+const redactEvent = (redactor: Redactor, event: WebSocketEvent) => {
+  if (event.kind === "binary") return event
+  const body =
+    event.direction === "client"
+      ? redactor.request({ method: "WEBSOCKET", url: "", headers: {}, body: event.body }).body
+      : redactor.response({ status: 101, headers: {}, body: event.body }).body
+  return { ...event, body }
+}
+
 export const makeWebSocketExecutor = <E>(
   options: WebSocketRecordReplayOptions<E>,
 ): Effect.Effect<WebSocketExecutor<E>, never, Scope.Scope> =>
   Effect.gen(function* () {
     const mode = options.mode ?? (yield* resolveAutoMode(options.cassette, options.name))
     const redactor = options.redactor ?? make()
-    const openSnapshot = (request: WebSocketRequest) => {
-      const snapshot = redactor.request({
-        method: "GET",
-        url: request.url,
-        headers: headersRecord(request.headers),
-        body: "",
-      })
-      return { url: snapshot.url, headers: snapshot.headers }
-    }
-    const redactEvent = (event: WebSocketEvent) => {
-      if (event.kind === "binary") return event
-      const body =
-        event.direction === "client"
-          ? redactor.request({ method: "WEBSOCKET", url: "", headers: {}, body: event.body }).body
-          : redactor.response({ status: 101, headers: {}, body: event.body }).body
-      return { ...event, body }
-    }
-
     if (mode === "passthrough") return options.live
+    if (mode === "record") return makeRecordExecutor(options, redactor)
+    return yield* makeReplayExecutor(options, redactor)
+  })
 
-    if (mode === "record") {
+const makeRecordExecutor = <E>(options: WebSocketRecordReplayOptions<E>, redactor: Redactor): WebSocketExecutor<E> => ({
+  open: (request) =>
+    Effect.gen(function* () {
+      const events: WebSocketEvent[] = []
+      const connection = yield* options.live.open(request)
+      const closed = yield* Ref.make(false)
+      const closeLock = yield* Semaphore.make(1)
       return {
-        open: (request) =>
+        sendText: (message) =>
+          Effect.sync(() => events.push(redactEvent(redactor, textEvent("client", message)))).pipe(
+            Effect.andThen(connection.sendText(message)),
+          ),
+        messages: connection.messages.pipe(
+          Stream.tap((message) =>
+            Effect.sync(() =>
+              events.push(
+                typeof message === "string"
+                  ? redactEvent(redactor, textEvent("server", message))
+                  : {
+                      direction: "server",
+                      kind: "binary",
+                      body: Buffer.from(message).toString("base64"),
+                      bodyEncoding: "base64",
+                    },
+              ),
+            ),
+          ),
+        ),
+        close: closeLock.withPermit(
           Effect.gen(function* () {
-            const events: WebSocketEvent[] = []
-            const connection = yield* options.live.open(request)
-            const closed = yield* Ref.make(false)
-            const closeLock = yield* Semaphore.make(1)
-            return {
-              sendText: (message) =>
-                Effect.sync(() => events.push(redactEvent(textEvent("client", message)))).pipe(
-                  Effect.andThen(connection.sendText(message)),
-                ),
-              messages: connection.messages.pipe(
-                Stream.tap((message) =>
-                  Effect.sync(() =>
-                    events.push(
-                      typeof message === "string"
-                        ? redactEvent(textEvent("server", message))
-                        : {
-                            direction: "server",
-                            kind: "binary",
-                            body: Buffer.from(message).toString("base64"),
-                            bodyEncoding: "base64",
-                          },
-                    ),
-                  ),
-                ),
-              ),
-              close: closeLock.withPermit(
-                Effect.gen(function* () {
-                  if (yield* Ref.get(closed)) return
-                  yield* connection.close
-                  yield* options.cassette
-                    .append(
-                      options.name,
-                      { transport: "websocket", open: openSnapshot(request), events },
-                      options.metadata,
-                    )
-                    .pipe(Effect.orDie)
-                  yield* Ref.set(closed, true)
-                }),
-              ),
-            }
+            if (yield* Ref.get(closed)) return
+            yield* connection.close
+            yield* options.cassette
+              .append(
+                options.name,
+                { transport: "websocket", open: openSnapshot(redactor, request), events },
+                options.metadata,
+              )
+              .pipe(Effect.orDie)
+            yield* Ref.set(closed, true)
           }),
+        ),
       }
-    }
+    }),
+})
 
+const makeReplayExecutor = <E>(
+  options: WebSocketRecordReplayOptions<E>,
+  redactor: Redactor,
+): Effect.Effect<WebSocketExecutor<E>, never, Scope.Scope> =>
+  Effect.gen(function* () {
     const replay = yield* makeReplayState(options.cassette, options.name, webSocketInteractions)
     return {
       open: (request) =>
@@ -142,7 +149,7 @@ export const makeWebSocketExecutor = <E>(
           const claimed = yield* replay
             .claim((interaction, index) =>
               Effect.sync(() => {
-                const incoming = canonicalizeJson(openSnapshot(request))
+                const incoming = canonicalizeJson(openSnapshot(redactor, request))
                 if (interaction && JSON.stringify(incoming) === JSON.stringify(canonicalizeJson(interaction.open)))
                   return
                 throw new Error(`WebSocket open ${index + 1} does not match ${safeText(incoming)}`)
