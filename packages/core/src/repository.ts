@@ -58,26 +58,33 @@ export function parse(input: string): Reference | undefined {
   const cleaned = normalizeInput(input)
   if (!cleaned) return
 
-  const githubPrefixed = cleaned.match(/^github:([^/\s]+)\/([^/\s]+)$/)
+  const short = parseShortReference(cleaned)
+  if (short) return short
+  return parseURLReference(cleaned)
+}
+
+function parseShortReference(input: string) {
+  const githubPrefixed = input.match(/^github:([^/\s]+)\/([^/\s]+)$/)
   if (githubPrefixed) return buildRemote({ host: "github.com", segments: [githubPrefixed[1], githubPrefixed[2]] })
+  if (input.includes("://")) return
 
-  if (!cleaned.includes("://")) {
-    const scp = cleaned.match(/^(?:[^@/\s]+@)?([^:/\s]+):(.+)$/)
-    if (scp) return buildRemote({ host: scp[1], segments: parts(scp[2]), remote: cleaned })
+  const scp = input.match(/^(?:[^@/\s]+@)?([^:/\s]+):(.+)$/)
+  if (scp) return buildRemote({ host: scp[1], segments: parts(scp[2]), remote: input })
 
-    const direct = parts(cleaned)
-    if (direct.length >= 2 && hostLike(direct[0])) return buildRemote({ host: direct[0], segments: direct.slice(1) })
-    if (direct.length === 2) return buildRemote({ host: "github.com", segments: direct })
-  }
+  const direct = parts(input)
+  if (direct.length >= 2 && hostLike(direct[0])) return buildRemote({ host: direct[0], segments: direct.slice(1) })
+  return direct.length === 2 ? buildRemote({ host: "github.com", segments: direct }) : undefined
+}
 
+function parseURLReference(input: string) {
   try {
-    const url = new URL(cleaned)
-    if (url.protocol === "file:") return buildFile({ url, remote: cleaned })
+    const url = new URL(input)
+    if (url.protocol === "file:") return buildFile({ url, remote: input })
     const segments = parts(url.pathname)
     return buildRemote({
       host: url.host,
       segments,
-      remote: url.host === "github.com" ? githubRemote(segments.join("/")) : cleaned,
+      remote: url.host === "github.com" ? githubRemote(segments.join("/")) : input,
       protocol: url.protocol,
     })
   } catch {

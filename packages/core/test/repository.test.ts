@@ -24,6 +24,11 @@ describe("Repository", () => {
       path.join("/cache", "github.com", "owner", "repo@feature%2Fx"),
     )
     expect(Repository.cacheIdentity(reference)).toBe("github.com/owner/repo")
+    expect(Repository.parseRemote("github:owner/repo")).toMatchObject({
+      host: "github.com",
+      path: "owner/repo",
+      remote: "https://github.com/owner/repo.git",
+    })
   })
 
   test("parses host path and scp remote references", () => {
@@ -38,6 +43,12 @@ describe("Repository", () => {
       path: "owner/repo",
       remote: "git@github.com:owner/repo.git",
       label: "owner/repo",
+    })
+    expect(Repository.parseRemote("https://gitlab.com/group/repo.git")).toMatchObject({
+      host: "gitlab.com",
+      path: "group/repo",
+      remote: "https://gitlab.com/group/repo.git",
+      protocol: "https:",
     })
   })
 
@@ -54,6 +65,7 @@ describe("Repository", () => {
   })
 
   test("rejects unsafe remote references and branches with typed errors", () => {
+    expect(Repository.parse("   ")).toBeUndefined()
     expect(() => Repository.parseRemote("not-a-repo")).toThrow(Repository.InvalidReferenceError)
     expect(() => Repository.parseRemote("git@github.com:../../../etc/passwd")).toThrow(Repository.InvalidReferenceError)
     expect(() => Repository.validateBranch("feature/docs.v1")).not.toThrow()
